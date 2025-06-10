@@ -66,12 +66,18 @@ public class TelegramOTPAuthenticator implements Authenticator {
         // Обработка повторной отправки кода
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
             UserModel user = context.getUser();
-            String newSecret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, newSecret);  // ✅ Обновляем в Keycloak DB
+            String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);
+            
+            // Если секрета нет (хотя должен быть), создаем новый
+            if (secret == null || secret.isEmpty()) {
+                secret = generateRandomSecret();
+                user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
+            }
+            
             try {
                 sendTelegramMessage(
                     user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR),
-                    "Your new OTP code: " + generateOTP(newSecret)
+                    "Your new OTP code: " + generateOTP(secret) // Используем текущий секрет
                 );
                 Response challenge = context.form()
                     .setSuccess("Код отправлен повторно")
