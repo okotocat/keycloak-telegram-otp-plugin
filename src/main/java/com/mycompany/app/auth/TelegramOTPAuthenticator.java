@@ -121,7 +121,7 @@ public class TelegramOTPAuthenticator implements Authenticator {
         Base32 base32 = new Base32();
         byte[] bytes = base32.decode(secret);
         String hexKey = Hex.encodeHexString(bytes);
-        return TOTP.getOTP(hexKey, System.currentTimeMillis() / 1000, 6, "HmacSHA1", 5);
+        return TOTP.getOTP(hexKey, System.currentTimeMillis() / 1000, 6, "HmacSHA1", 10); // 5-секундное окно
     }
 
     // Валидация OTP
