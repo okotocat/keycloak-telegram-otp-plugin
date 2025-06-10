@@ -54,7 +54,7 @@
                     }).then(response => {
                         if (response.ok) {
                             // Запускаем таймер после успешной отправки
-                            countdown = 30;
+                            countdown = 5;
                             updateResendButton();
                         }
                     });
