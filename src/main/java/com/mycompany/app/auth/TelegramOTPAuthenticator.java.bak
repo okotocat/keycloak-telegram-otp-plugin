@@ -3,10 +3,13 @@ package com.mycompany.app.auth;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.Authenticator;
-import org.keycloak.models.*;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserModel;
+import org.keycloak.models.utils.FormMessage;
+import org.jboss.logging.Logger;
 import org.keycloak.services.messages.Messages;
 import jakarta.ws.rs.core.Response;
-import org.jboss.logging.Logger;
 
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
@@ -15,33 +18,28 @@ import org.apache.http.impl.client.HttpClients;
 import de.taimos.totp.TOTP;
 import org.apache.commons.codec.binary.Base32;
 import org.apache.commons.codec.binary.Hex;
-
 import java.security.SecureRandom;
 import java.io.IOException;
 
 public class TelegramOTPAuthenticator implements Authenticator {
     private static final Logger logger = Logger.getLogger(TelegramOTPAuthenticator.class);
-    
-    // Атрибуты (хранятся в Keycloak DB, а не в LDAP)
-    private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";  // Берется из LDAP
-    private static final String TOTP_SECRET_ATTR = "kc_telegram_totp_secret"; // Сохраняется в Keycloak DB
+    private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";
+    private static final String TOTP_SECRET_ATTR = "telegram_totp_secret";
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
         UserModel user = context.getUser();
         String chatId = user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR);
 
-        // Если у пользователя нет chat_id, пропускаем OTP
         if (chatId == null || chatId.isEmpty()) {
             context.success();
             return;
         }
 
-        // Получаем или генерируем TOTP-секрет (хранится в Keycloak DB)
         String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);
         if (secret == null || secret.isEmpty()) {
             secret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, secret);  // ✅ Записываем в Keycloak DB
+            user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
         }
 
         String otp = generateOTP(secret);
@@ -53,9 +51,9 @@ public class TelegramOTPAuthenticator implements Authenticator {
                     .createForm("telegram-otp.ftl");
             context.challenge(challenge);
         } catch (IOException e) {
-            logger.error("Ошибка отправки OTP в Telegram", e);
+            logger.error("Failed to send Telegram OTP", e);
             Response challenge = context.form()
-                    .setError("Не удалось отправить код")
+                    .setError("Failed to send OTP code")
                     .createForm("telegram-otp.ftl");
             context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challenge);
         }
@@ -63,45 +61,47 @@ public class TelegramOTPAuthenticator implements Authenticator {
 
     @Override
     public void action(AuthenticationFlowContext context) {
-        // Обработка повторной отправки кода
+        // Обработка запроса на повторную отправку кода
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
             UserModel user = context.getUser();
             String newSecret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, newSecret);  // ✅ Обновляем в Keycloak DB
+            user.setSingleAttribute(TOTP_SECRET_ATTR, newSecret);
+            
+            String otp = generateOTP(newSecret);
+            
             try {
                 sendTelegramMessage(
                     user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR),
-                    "Your new OTP code: " + generateOTP(newSecret)
+                    "Your new OTP code: " + otp
                 );
+                
                 Response challenge = context.form()
-                    .setSuccess("Код отправлен повторно")
+                    .setSuccess("otpResent")
                     .createForm("telegram-otp.ftl");
                 context.challenge(challenge);
             } catch (IOException e) {
-                logger.error("Ошибка повторной отправки OTP", e);
+                logger.error("Failed to resend Telegram OTP", e);
                 Response challenge = context.form()
-                    .setError("Ошибка при отправке кода")
+                    .setError("resendFailed")
                     .createForm("telegram-otp.ftl");
                 context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR, challenge);
             }
             return;
         }
 
-        // Проверка введенного OTP
+        // Стандартная обработка OTP
         String enteredOtp = context.getHttpRequest().getDecodedFormParameters().getFirst("otp");
-        String secret = context.getUser().getFirstAttribute(TOTP_SECRET_ATTR);  // Берем из Keycloak DB
-
-        if (!validateOTP(secret, enteredOtp)) {
+        if (!validateOTP(context.getUser().getFirstAttribute(TOTP_SECRET_ATTR), enteredOtp)) {
             Response challenge = context.form()
-                .setError("Неверный код")
+                .setError(Messages.INVALID_ACCESS_CODE)
                 .createForm("telegram-otp.ftl");
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
             return;
         }
-        context.success();  // ✅ Успешная аутентификация
+        
+        context.success();
     }
 
-    // Генерация случайного TOTP-секрета
     private String generateRandomSecret() {
         SecureRandom random = new SecureRandom();
         byte[] bytes = new byte[20];
@@ -110,7 +110,6 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return base32.encodeToString(bytes);
     }
 
-    // Генерация 6-значного OTP-кода
     private String generateOTP(String secret) {
         Base32 base32 = new Base32();
         byte[] bytes = base32.decode(secret);
@@ -118,15 +117,14 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return TOTP.getOTP(hexKey);
     }
 
-    // Валидация OTP
     private boolean validateOTP(String secret, String otp) {
         if (secret == null || otp == null || otp.length() != 6 || !otp.matches("\\d+")) {
+            logger.warn("Invalid OTP format");
             return false;
         }
         return generateOTP(secret).equals(otp);
     }
 
-    // Отправка сообщения в Telegram (без изменений)
     private void sendTelegramMessage(String chatId, String text) throws IOException {
         String botToken = System.getenv("TELEGRAM_BOT_TOKEN");
         String url = "https://api.telegram.org/bot" + botToken + "/sendMessage";
@@ -141,16 +139,20 @@ public class TelegramOTPAuthenticator implements Authenticator {
     }
 
     @Override
-    public boolean requiresUser() { return true; }
-
-    @Override
-    public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
-        return user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR) != null;
+    public boolean requiresUser() {
+        return true;
     }
 
     @Override
-    public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {}
+    public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
+        return true;
+    }
 
     @Override
-    public void close() {}
+    public void setRequiredActions(KeycloakSession session, RealmModel realm, UserModel user) {
+    }
+
+    @Override
+    public void close() {
+    }
 }
