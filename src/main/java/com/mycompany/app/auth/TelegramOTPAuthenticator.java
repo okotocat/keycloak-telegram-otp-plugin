@@ -22,26 +22,24 @@ import java.io.IOException;
 public class TelegramOTPAuthenticator implements Authenticator {
     private static final Logger logger = Logger.getLogger(TelegramOTPAuthenticator.class);
     
-    // Атрибуты (хранятся в Keycloak DB, а не в LDAP)
-    private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";  // Берется из LDAP
-    private static final String TOTP_SECRET_ATTR = "kc_telegram_totp_secret"; // Сохраняется в Keycloak DB
+    private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";
+    private static final String TOTP_SECRET_ATTR = "kc_telegram_totp_secret";
+    private static final int TOTP_INTERVAL = 5; // 5-секундный интервал
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
         UserModel user = context.getUser();
         String chatId = user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR);
 
-        // Если у пользователя нет chat_id, пропускаем OTP
         if (chatId == null || chatId.isEmpty()) {
             context.success();
             return;
         }
 
-        // Получаем или генерируем TOTP-секрет (хранится в Keycloak DB)
         String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);
         if (secret == null || secret.isEmpty()) {
             secret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, secret);  // ✅ Записываем в Keycloak DB
+            user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
         }
 
         String otp = generateOTP(secret);
@@ -63,24 +61,23 @@ public class TelegramOTPAuthenticator implements Authenticator {
 
     @Override
     public void action(AuthenticationFlowContext context) {
-        // Обработка повторной отправки кода
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
             UserModel user = context.getUser();
             String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);
             
-            // Если секрета нет (хотя должен быть), создаем новый
             if (secret == null || secret.isEmpty()) {
                 secret = generateRandomSecret();
                 user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
             }
             
             try {
+                String otp = generateOTP(secret);
                 sendTelegramMessage(
                     user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR),
-                    "Your new OTP code: " + generateOTP(secret) // Используем текущий секрет
+                    "Your new OTP code: " + otp
                 );
                 Response challenge = context.form()
-                    .setSuccess("Код отправлен повторно")
+                    .setSuccess("Новый код отправлен")
                     .createForm("telegram-otp.ftl");
                 context.challenge(challenge);
             } catch (IOException e) {
@@ -93,9 +90,8 @@ public class TelegramOTPAuthenticator implements Authenticator {
             return;
         }
 
-        // Проверка введенного OTP
         String enteredOtp = context.getHttpRequest().getDecodedFormParameters().getFirst("otp");
-        String secret = context.getUser().getFirstAttribute(TOTP_SECRET_ATTR);  // Берем из Keycloak DB
+        String secret = context.getUser().getFirstAttribute(TOTP_SECRET_ATTR);
 
         if (!validateOTP(secret, enteredOtp)) {
             Response challenge = context.form()
@@ -104,10 +100,9 @@ public class TelegramOTPAuthenticator implements Authenticator {
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
             return;
         }
-        context.success();  // ✅ Успешная аутентификация
+        context.success();
     }
 
-    // Генерация случайного TOTP-секрета
     private String generateRandomSecret() {
         SecureRandom random = new SecureRandom();
         byte[] bytes = new byte[20];
@@ -116,23 +111,28 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return base32.encodeToString(bytes);
     }
 
-    // Генерация 6-значного OTP-кода
     private String generateOTP(String secret) {
+        return generateOTP(secret, 0);
+    }
+
+    private String generateOTP(String secret, int timeOffsetSeconds) {
         Base32 base32 = new Base32();
         byte[] bytes = base32.decode(secret);
         String hexKey = Hex.encodeHexString(bytes);
-        return TOTP.getOTP(hexKey, System.currentTimeMillis() / 1000, 6, "HmacSHA1", 15);
+        long time = (System.currentTimeMillis() / 1000) + timeOffsetSeconds;
+        return TOTP.getOTP(hexKey, time, 6, "HmacSHA1", TOTP_INTERVAL);
     }
 
-    // Валидация OTP
     private boolean validateOTP(String secret, String otp) {
         if (secret == null || otp == null || otp.length() != 6 || !otp.matches("\\d+")) {
             return false;
         }
-        return generateOTP(secret).equals(otp);
+        
+        // Проверяем текущий и предыдущий интервалы
+        return generateOTP(secret, 0).equals(otp) || 
+               generateOTP(secret, -TOTP_INTERVAL).equals(otp);
     }
 
-    // Отправка сообщения в Telegram (без изменений)
     private void sendTelegramMessage(String chatId, String text) throws IOException {
         String botToken = System.getenv("TELEGRAM_BOT_TOKEN");
         String url = "https://api.telegram.org/bot" + botToken + "/sendMessage";
