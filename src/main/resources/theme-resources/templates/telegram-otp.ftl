@@ -41,7 +41,7 @@
         <script>
             document.addEventListener('DOMContentLoaded', function() {
                 const resendButton = document.getElementById('resend-code');
-                let countdown = 30;
+                let countdown = 5;
                 
                 // Функция для отправки запроса на повторную отправку кода
                 function resendOtp() {
