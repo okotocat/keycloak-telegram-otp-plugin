@@ -136,8 +136,8 @@ public class TelegramOTPAuthenticator implements Authenticator {
         
         // Проверяем -1, 0, +1 временные интервалы
         for (int i = -1; i <= 1; i++) {
-            long time = (currentTime / timeStep + i) * timeStep;
-            String expectedOtp = TOTP.getOTP(hexKey, time);
+            long timeWindow = (currentTime / timeStep + i);
+            String expectedOtp = TOTP.getOTP(hexKey, timeWindow);
             if (expectedOtp.equals(otp)) {
                 return true;
             }
