@@ -52,19 +52,21 @@
                 
                 // Функция для отправки запроса на повторную отправку кода
                 function resendOtp() {
-                    fetch('${url.loginAction}', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                        },
-                        body: 'resend=true'
-                    }).then(response => {
-                        if (response.ok) {
-                            // Запускаем таймер после успешной отправки
-                            countdown = 32;
-                            updateResendButton();
-                        }
-                    });
+                    // Отправляем запрос через скрытую форму для правильной обработки Keycloak
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = '${url.loginAction}';
+                    
+                    const resendInput = document.createElement('input');
+                    resendInput.type = 'hidden';
+                    resendInput.name = 'resend';
+                    resendInput.value = 'true';
+                    
+                    form.appendChild(resendInput);
+                    document.body.appendChild(form);
+                    
+                    console.log('Отправка resend запроса');
+                    form.submit(); // Это обновит страницу с новой формой
                 }
                 
                 // Таймер обратного отсчета
