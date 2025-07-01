@@ -61,8 +61,12 @@ public class TelegramOTPAuthenticator implements Authenticator {
 
     @Override
     public void action(AuthenticationFlowContext context) {
+        logger.infof("=== ACTION вызван для пользователя: %s ===", context.getUser().getUsername());
+        logger.infof("Параметры запроса: %s", context.getHttpRequest().getDecodedFormParameters().keySet());
+        
         // Обработка повторной отправки кода - генерируем новый код с новым интервалом
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
+            logger.info("=== Обработка RESEND ===");
             UserModel user = context.getUser();
             
             // Генерируем новый OTP код и обновляем время
@@ -95,7 +99,12 @@ public class TelegramOTPAuthenticator implements Authenticator {
         String enteredOtp = context.getHttpRequest().getDecodedFormParameters().getFirst("otp");
         UserModel user = context.getUser();
         
+        logger.infof("=== Проверка OTP кода: %s ===", enteredOtp);
+        logger.infof("Сохраненный код: %s", user.getFirstAttribute(OTP_CODE_ATTR));
+        logger.infof("Время отправки: %s", user.getFirstAttribute(OTP_TIMESTAMP_ATTR));
+        
         if (!validateOTP(user, enteredOtp)) {
+            logger.warn("=== ВАЛИДАЦИЯ ПРОВАЛЕНА ===");
             Response challenge = context.form()
                 .setError("Неверный код")
                 .createForm("telegram-otp.ftl");

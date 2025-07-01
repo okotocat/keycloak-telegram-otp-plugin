@@ -3,7 +3,7 @@
     <#if section = "header">
         ${msg("telegramOtpTitle")}
     <#elseif section = "form">
-        <form id="kc-telegram-otp-form" action="${url.loginAction}" method="post">
+        <form id="kc-telegram-otp-form" action="${url.loginAction}" method="post" autocomplete="off">
             <div class="${properties.kcFormGroupClass!}">
                 <div class="${properties.kcLabelWrapperClass!}">
                     <label for="otp" class="${properties.kcLabelClass!}">${msg("telegramOtpLabel")}</label>
@@ -40,8 +40,15 @@
 
         <script>
             document.addEventListener('DOMContentLoaded', function() {
+                console.log('Telegram OTP form loaded');
                 const resendButton = document.getElementById('resend-code');
                 let countdown = 32;
+                
+                // Логирование для отладки
+                const form = document.getElementById('kc-telegram-otp-form');
+                form.addEventListener('submit', function(e) {
+                    console.log('Form submitted with OTP:', document.getElementById('otp').value);
+                });
                 
                 // Функция для отправки запроса на повторную отправку кода
                 function resendOtp() {
