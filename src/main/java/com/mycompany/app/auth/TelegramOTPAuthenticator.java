@@ -120,30 +120,19 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return TOTP.getOTP(hexKey); // Стандартный 30-секундный интервал
     }
 
-    // Валидация OTP с учетом временного окна
+    // Валидация OTP
     private boolean validateOTP(String secret, String otp) {
         if (secret == null || otp == null || otp.length() != 6 || !otp.matches("\\d+")) {
             return false;
         }
         
-        // Проверяем текущий код и коды в окне ±1 интервал (30 сек)
+        // Проверяем текущий TOTP код
         Base32 base32 = new Base32();
         byte[] bytes = base32.decode(secret);
         String hexKey = Hex.encodeHexString(bytes);
+        String expectedOtp = TOTP.getOTP(hexKey);
         
-        long currentTime = System.currentTimeMillis() / 1000;
-        long timeStep = 30; // 30 секунд
-        
-        // Проверяем -1, 0, +1 временные интервалы
-        for (int i = -1; i <= 1; i++) {
-            long timeWindow = (currentTime / timeStep + i);
-            String expectedOtp = TOTP.getOTP(hexKey, timeWindow);
-            if (expectedOtp.equals(otp)) {
-                return true;
-            }
-        }
-        
-        return false;
+        return expectedOtp.equals(otp);
     }
 
     // Отправка сообщения в Telegram (без изменений)
