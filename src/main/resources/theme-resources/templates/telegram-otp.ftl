@@ -31,12 +31,13 @@
                     <div style="margin-bottom: 10px;">
                         <span class="${properties.kcFormOptionsLabelClass!}">${msg("notReceivedCode")}</span>
                     </div>
-                    <button type="button" 
-                            id="resend-code"
-                            class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonLargeClass!}"
-                            style="margin-top: 10px;">
-                        ${msg("resendCode")}
-                    </button>
+                    <div class="${properties.kcFormButtonsClass!}">
+                        <button type="button" 
+                                id="resend-code"
+                                class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}">
+                            ${msg("resendCode")}
+                        </button>
+                    </div>
                 </div>
             </div>
         </form>
