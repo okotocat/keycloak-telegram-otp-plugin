@@ -33,7 +33,7 @@
                     </div>
                     <button type="button" 
                             id="resend-code"
-                            class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}"
+                            class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonLargeClass!}"
                             style="margin-top: 10px;">
                         ${msg("resendCode")}
                     </button>
