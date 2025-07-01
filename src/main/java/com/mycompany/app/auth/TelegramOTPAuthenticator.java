@@ -65,12 +65,15 @@ public class TelegramOTPAuthenticator implements Authenticator {
         // Обработка повторной отправки кода
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
             UserModel user = context.getUser();
-            String newSecret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, newSecret);  // ✅ Обновляем в Keycloak DB
+            String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);  // Используем СУЩЕСТВУЮЩИЙ секрет
+            if (secret == null || secret.isEmpty()) {
+                secret = generateRandomSecret();
+                user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
+            }
             try {
                 sendTelegramMessage(
                     user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR),
-                    "Your new OTP code: " + generateOTP(newSecret)
+                    "Your new OTP code: " + generateOTP(secret)
                 );
                 Response challenge = context.form()
                     .setSuccess("Код отправлен повторно")
@@ -117,12 +120,30 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return TOTP.getOTP(hexKey); // Стандартный 30-секундный интервал
     }
 
-    // Валидация OTP
+    // Валидация OTP с учетом временного окна
     private boolean validateOTP(String secret, String otp) {
         if (secret == null || otp == null || otp.length() != 6 || !otp.matches("\\d+")) {
             return false;
         }
-        return generateOTP(secret).equals(otp);
+        
+        // Проверяем текущий код и коды в окне ±1 интервал (30 сек)
+        Base32 base32 = new Base32();
+        byte[] bytes = base32.decode(secret);
+        String hexKey = Hex.encodeHexString(bytes);
+        
+        long currentTime = System.currentTimeMillis() / 1000;
+        long timeStep = 30; // 30 секунд
+        
+        // Проверяем -1, 0, +1 временные интервалы
+        for (int i = -1; i <= 1; i++) {
+            long time = (currentTime / timeStep + i) * timeStep;
+            String expectedOtp = TOTP.getOTP(hexKey, time);
+            if (expectedOtp.equals(otp)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     // Отправка сообщения в Telegram (без изменений)
