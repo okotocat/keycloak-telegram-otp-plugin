@@ -27,11 +27,14 @@
                            value="${msg("doSubmit")}" />
                 </div>
                 
-                <div class="${properties.kcFormOptionsWrapperClass!}">
-                    <span class="${properties.kcFormOptionsLabelClass!}">${msg("notReceivedCode")}</span>
+                <div class="${properties.kcFormOptionsWrapperClass!}" style="text-align: center; margin-top: 20px;">
+                    <div style="margin-bottom: 10px;">
+                        <span class="${properties.kcFormOptionsLabelClass!}">${msg("notReceivedCode")}</span>
+                    </div>
                     <button type="button" 
                             id="resend-code"
-                            class="${properties.kcButtonClass!} ${properties.kcButtonDefaultClass!} ${properties.kcButtonSmallClass!}">
+                            class="${properties.kcButtonClass!} ${properties.kcButtonSecondaryClass!} ${properties.kcButtonBlockClass!}"
+                            style="margin-top: 10px; min-width: 200px;">
                         ${msg("resendCode")}
                     </button>
                 </div>
