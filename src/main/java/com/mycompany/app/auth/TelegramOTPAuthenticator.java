@@ -11,24 +11,19 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
-import de.taimos.totp.TOTP;
-import org.apache.commons.codec.binary.Base32;
-import org.apache.commons.codec.binary.Hex;
-import org.apache.commons.codec.DecoderException;
-
 import java.security.SecureRandom;
 import java.io.IOException;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.security.NoSuchAlgorithmException;
-import java.security.InvalidKeyException;
 
 public class TelegramOTPAuthenticator implements Authenticator {
     private static final Logger logger = Logger.getLogger(TelegramOTPAuthenticator.class);
     
     // Атрибуты (хранятся в Keycloak DB, а не в LDAP)
     private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";  // Берется из LDAP
-    private static final String TOTP_SECRET_ATTR = "kc_telegram_totp_secret"; // Сохраняется в Keycloak DB
+    private static final String OTP_CODE_ATTR = "kc_telegram_otp_code";        // Текущий OTP код
+    private static final String OTP_TIMESTAMP_ATTR = "kc_telegram_otp_timestamp"; // Время отправки кода
+    
+    // Время жизни OTP кода в секундах (2 минуты)
+    private static final long OTP_VALIDITY_SECONDS = 120;
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
@@ -41,14 +36,13 @@ public class TelegramOTPAuthenticator implements Authenticator {
             return;
         }
 
-        // Получаем или генерируем TOTP-секрет (хранится в Keycloak DB)
-        String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);
-        if (secret == null || secret.isEmpty()) {
-            secret = generateRandomSecret();
-            user.setSingleAttribute(TOTP_SECRET_ATTR, secret);  // ✅ Записываем в Keycloak DB
-        }
-
-        String otp = generateOTP(secret);
+        // Генерируем новый OTP код и сохраняем время отправки
+        String otp = generateNewOTP();
+        long currentTime = System.currentTimeMillis();
+        
+        // Сохраняем код и время отправки в атрибутах пользователя
+        user.setSingleAttribute(OTP_CODE_ATTR, otp);
+        user.setSingleAttribute(OTP_TIMESTAMP_ATTR, String.valueOf(currentTime));
 
         try {
             sendTelegramMessage(chatId, "Your OTP code: " + otp);
@@ -67,18 +61,21 @@ public class TelegramOTPAuthenticator implements Authenticator {
 
     @Override
     public void action(AuthenticationFlowContext context) {
-        // Обработка повторной отправки кода
+        // Обработка повторной отправки кода - генерируем новый код с новым интервалом
         if (context.getHttpRequest().getDecodedFormParameters().containsKey("resend")) {
             UserModel user = context.getUser();
-            String secret = user.getFirstAttribute(TOTP_SECRET_ATTR);  // Используем СУЩЕСТВУЮЩИЙ секрет
-            if (secret == null || secret.isEmpty()) {
-                secret = generateRandomSecret();
-                user.setSingleAttribute(TOTP_SECRET_ATTR, secret);
-            }
+            
+            // Генерируем новый OTP код и обновляем время
+            String newOtp = generateNewOTP();
+            long currentTime = System.currentTimeMillis();
+            
+            user.setSingleAttribute(OTP_CODE_ATTR, newOtp);
+            user.setSingleAttribute(OTP_TIMESTAMP_ATTR, String.valueOf(currentTime));
+            
             try {
                 sendTelegramMessage(
                     user.getFirstAttribute(TELEGRAM_CHAT_ID_ATTR),
-                    "Your new OTP code: " + generateOTP(secret)
+                    "Your new OTP code: " + newOtp
                 );
                 Response challenge = context.form()
                     .setSuccess("Код отправлен повторно")
@@ -96,9 +93,9 @@ public class TelegramOTPAuthenticator implements Authenticator {
 
         // Проверка введенного OTP
         String enteredOtp = context.getHttpRequest().getDecodedFormParameters().getFirst("otp");
-        String secret = context.getUser().getFirstAttribute(TOTP_SECRET_ATTR);  // Берем из Keycloak DB
-
-        if (!validateOTP(secret, enteredOtp)) {
+        UserModel user = context.getUser();
+        
+        if (!validateOTP(user, enteredOtp)) {
             Response challenge = context.form()
                 .setError("Неверный код")
                 .createForm("telegram-otp.ftl");
@@ -108,103 +105,57 @@ public class TelegramOTPAuthenticator implements Authenticator {
         context.success();  // ✅ Успешная аутентификация
     }
 
-    // Генерация случайного TOTP-секрета
-    private String generateRandomSecret() {
+    // Генерация нового 6-значного OTP кода
+    private String generateNewOTP() {
         SecureRandom random = new SecureRandom();
-        byte[] bytes = new byte[20];
-        random.nextBytes(bytes);
-        Base32 base32 = new Base32();
-        return base32.encodeToString(bytes);
+        int code = random.nextInt(900000) + 100000; // Генерируем число от 100000 до 999999
+        return String.valueOf(code);
     }
 
-    // Генерация 6-значного OTP-кода
-    private String generateOTP(String secret) {
-        Base32 base32 = new Base32();
-        byte[] bytes = base32.decode(secret);
-        String hexKey = Hex.encodeHexString(bytes);
-        return TOTP.getOTP(hexKey); // Стандартный 30-секундный интервал
-    }
-
-    // Валидация OTP с временным окном толерантности
-    private boolean validateOTP(String secret, String otp) {
-        if (secret == null || otp == null || otp.length() != 6 || !otp.matches("\\d+")) {
+    // Валидация OTP с проверкой временного интервала
+    private boolean validateOTP(UserModel user, String enteredOtp) {
+        if (enteredOtp == null || enteredOtp.length() != 6 || !enteredOtp.matches("\\d+")) {
+            logger.warnf("Неверный формат OTP: %s", enteredOtp);
             return false;
         }
         
-        Base32 base32 = new Base32();
-        byte[] bytes = base32.decode(secret);
-        String hexKey = Hex.encodeHexString(bytes);
+        // Получаем сохраненный код и время отправки
+        String savedOtp = user.getFirstAttribute(OTP_CODE_ATTR);
+        String timestampStr = user.getFirstAttribute(OTP_TIMESTAMP_ATTR);
         
-        // Получаем текущее время в секундах
-        long currentTimeSeconds = System.currentTimeMillis() / 1000;
-        long timeStep = 30; // TOTP использует 30-секундные интервалы
-        
-        // Проверяем код для текущего и соседних временных окон (-1, 0, +1)
-        // Это дает окно толерантности в 90 секунд (±30 сек)
-        for (int i = -1; i <= 1; i++) {
-            long timeWindow = (currentTimeSeconds / timeStep + i) * timeStep;
-            String expectedOtp = generateOTPForTime(hexKey, timeWindow);
-            
-            logger.debugf("Проверяем OTP для времени %d: ожидаем %s, получили %s", 
-                         timeWindow, expectedOtp, otp);
-            
-            if (expectedOtp.equals(otp)) {
-                logger.infof("OTP валиден для временного окна %d (смещение: %d)", timeWindow, i);
-                return true;
-            }
+        if (savedOtp == null || timestampStr == null) {
+            logger.warn("Отсутствует сохраненный OTP код или время отправки");
+            return false;
         }
         
-        logger.warnf("Не найден подходящий OTP код для входящего %s", otp);
-        return false;
-    }
-    
-    // Генерация OTP для конкретного времени
-    private String generateOTPForTime(String hexKey, long timeSeconds) {
-        // Конвертируем время в временные шаги (каждые 30 секунд)
-        long timeSteps = timeSeconds / 30;
-        
-        try {
-            // Используем рефлексию для доступа к методу с временным параметром
-            // или создаем собственную реализацию TOTP
-            return generateTOTPCode(hexKey, timeSteps);
-        } catch (Exception e) {
-            logger.error("Ошибка генерации TOTP для времени " + timeSeconds, e);
-            return TOTP.getOTP(hexKey); // Fallback к текущему времени
+        // Проверяем совпадение кода
+        if (!savedOtp.equals(enteredOtp)) {
+            logger.warnf("OTP код не совпадает: ожидали %s, получили %s", savedOtp, enteredOtp);
+            return false;
         }
-    }
-    
-    // Простая реализация TOTP алгоритма
-    private String generateTOTPCode(String hexKey, long timeSteps) {
+        
+        // Проверяем не истек ли срок действия кода
         try {
-            byte[] keyBytes = Hex.decodeHex(hexKey.toCharArray());
-            byte[] timeBytes = new byte[8];
+            long otpTimestamp = Long.parseLong(timestampStr);
+            long currentTime = System.currentTimeMillis();
+            long timeElapsed = (currentTime - otpTimestamp) / 1000; // в секундах
             
-            // Конвертируем время в big-endian формат
-            for (int i = 7; i >= 0; i--) {
-                timeBytes[i] = (byte) (timeSteps & 0xff);
-                timeSteps >>= 8;
+            if (timeElapsed > OTP_VALIDITY_SECONDS) {
+                logger.warnf("OTP код истек: прошло %d секунд, максимум %d", timeElapsed, OTP_VALIDITY_SECONDS);
+                return false;
             }
             
-            // Вычисляем HMAC-SHA1
-            javax.crypto.Mac hmac = javax.crypto.Mac.getInstance("HmacSHA1");
-            javax.crypto.spec.SecretKeySpec keySpec = new javax.crypto.spec.SecretKeySpec(keyBytes, "HmacSHA1");
-            hmac.init(keySpec);
-            byte[] hash = hmac.doFinal(timeBytes);
+            logger.infof("OTP код успешно валидирован: %s (возраст: %d сек)", enteredOtp, timeElapsed);
             
-            // Извлекаем 4 байта из хеша
-            int offset = hash[hash.length - 1] & 0xf;
-            int binary = ((hash[offset] & 0x7f) << 24) |
-                        ((hash[offset + 1] & 0xff) << 16) |
-                        ((hash[offset + 2] & 0xff) << 8) |
-                        (hash[offset + 3] & 0xff);
+            // Очищаем использованный код
+            user.removeAttribute(OTP_CODE_ATTR);
+            user.removeAttribute(OTP_TIMESTAMP_ATTR);
             
-            // Получаем 6-значный код
-            int otp = binary % 1000000;
-            return String.format("%06d", otp);
+            return true;
             
-        } catch (Exception e) {
-            logger.error("Ошибка в generateTOTPCode", e);
-            return TOTP.getOTP(hexKey); // Fallback
+        } catch (NumberFormatException e) {
+            logger.error("Ошибка парсинга времени отправки OTP: " + timestampStr, e);
+            return false;
         }
     }
 
