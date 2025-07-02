@@ -7,8 +7,7 @@ import org.keycloak.models.*;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.StringEntity;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import java.security.SecureRandom;
@@ -169,7 +168,7 @@ public class TelegramOTPAuthenticator implements Authenticator {
         }
     }
 
-    // Отправка сообщения в Telegram с указанием client_id
+    // Отправка сообщения через прокси-сервер
     private void sendTelegramMessage(AuthenticationFlowContext context, String chatId, String otp) throws IOException {
         // Получаем client_id из параметров запроса
         String clientId = context.getUriInfo().getQueryParameters().getFirst("client_id");
@@ -180,22 +179,24 @@ public class TelegramOTPAuthenticator implements Authenticator {
         // Формируем сообщение с client_id
         String message = String.format("Your OTP code for %s is: %s", clientId, otp);
         
-        logger.infof("Отправка OTP для client_id '%s': %s", clientId, message);
-        
-        // Прямая отправка через Telegram API
-        String botToken = System.getenv("TELEGRAM_BOT_TOKEN");
-        if (botToken == null) {
-            throw new IOException("TELEGRAM_BOT_TOKEN environment variable not set");
+        // URL вашего прокси-сервера
+        String proxyUrl = System.getenv("TELEGRAM_PROXY_URL"); // например: http://localhost:8000/webhook
+        if (proxyUrl == null) {
+            throw new IOException("TELEGRAM_PROXY_URL environment variable not set");
         }
         
-        String url = "https://api.telegram.org/bot" + botToken + "/sendMessage";
-        String json = String.format("{\"chat_id\":\"%s\",\"text\":\"%s\"}", chatId, message);
-
+        // Формируем URL с параметрами
+        String fullUrl = String.format("%s?phone=%s&code=%s", 
+            proxyUrl, 
+            chatId, 
+            java.net.URLEncoder.encode(message, "UTF-8")
+        );
+        
+        logger.infof("Отправка OTP для client_id '%s' через прокси: %s", clientId, fullUrl);
+        
         try (CloseableHttpClient client = HttpClients.createDefault()) {
-            HttpPost post = new HttpPost(url);
-            post.setHeader("Content-Type", "application/json");
-            post.setEntity(new StringEntity(json));
-            client.execute(post);
+            HttpGet get = new HttpGet(fullUrl);
+            client.execute(get);
         }
     }
 
