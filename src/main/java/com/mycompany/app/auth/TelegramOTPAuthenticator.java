@@ -16,10 +16,11 @@ import java.io.IOException;
 public class TelegramOTPAuthenticator implements Authenticator {
     private static final Logger logger = Logger.getLogger(TelegramOTPAuthenticator.class);
     
-    // Атрибуты (хранятся в Keycloak DB, а не в LDAP)
+    // Атрибуты
     private static final String TELEGRAM_CHAT_ID_ATTR = "telegram_chat_id";  // Берется из LDAP
-    private static final String OTP_CODE_ATTR = "kc_telegram_otp_code";        // Текущий OTP код
-    private static final String OTP_TIMESTAMP_ATTR = "kc_telegram_otp_timestamp"; // Время отправки кода
+    // Используем сессионные атрибуты вместо атрибутов пользователя для LDAP совместимости
+    private static final String SESSION_OTP_CODE = "kc_telegram_otp_code";        // OTP код в сессии
+    private static final String SESSION_OTP_TIMESTAMP = "kc_telegram_otp_timestamp"; // Время отправки в сессии
     
     // Время жизни OTP кода в секундах (2 минуты)
     private static final long OTP_VALIDITY_SECONDS = 120;
@@ -39,9 +40,9 @@ public class TelegramOTPAuthenticator implements Authenticator {
         String otp = generateNewOTP();
         long currentTime = System.currentTimeMillis();
         
-        // Сохраняем код и время отправки в атрибутах пользователя
-        user.setSingleAttribute(OTP_CODE_ATTR, otp);
-        user.setSingleAttribute(OTP_TIMESTAMP_ATTR, String.valueOf(currentTime));
+        // Сохраняем код и время отправки в сессии (для совместимости с LDAP)
+        context.getAuthenticationSession().setAuthNote(SESSION_OTP_CODE, otp);
+        context.getAuthenticationSession().setAuthNote(SESSION_OTP_TIMESTAMP, String.valueOf(currentTime));
 
         try {
             sendTelegramMessage(context, chatId, otp);
@@ -72,8 +73,8 @@ public class TelegramOTPAuthenticator implements Authenticator {
             String newOtp = generateNewOTP();
             long currentTime = System.currentTimeMillis();
             
-            user.setSingleAttribute(OTP_CODE_ATTR, newOtp);
-            user.setSingleAttribute(OTP_TIMESTAMP_ATTR, String.valueOf(currentTime));
+            context.getAuthenticationSession().setAuthNote(SESSION_OTP_CODE, newOtp);
+            context.getAuthenticationSession().setAuthNote(SESSION_OTP_TIMESTAMP, String.valueOf(currentTime));
             
             try {
                 sendTelegramMessage(
@@ -100,8 +101,8 @@ public class TelegramOTPAuthenticator implements Authenticator {
         UserModel user = context.getUser();
         
         logger.infof("=== Проверка OTP кода: %s ===", enteredOtp);
-        logger.infof("Сохраненный код: %s", user.getFirstAttribute(OTP_CODE_ATTR));
-        logger.infof("Время отправки: %s", user.getFirstAttribute(OTP_TIMESTAMP_ATTR));
+        logger.infof("Сохраненный код: %s", context.getAuthenticationSession().getAuthNote(SESSION_OTP_CODE));
+        logger.infof("Время отправки: %s", context.getAuthenticationSession().getAuthNote(SESSION_OTP_TIMESTAMP));
         
         if (!validateOTP(user, enteredOtp)) {
             logger.warn("=== ВАЛИДАЦИЯ ПРОВАЛЕНА ===");
