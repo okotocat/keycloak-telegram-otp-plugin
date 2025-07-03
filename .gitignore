@@ -2,3 +2,4 @@ GIT_KEY
 GIT_KEY.pub
 target
 .vscode
+build.sh
