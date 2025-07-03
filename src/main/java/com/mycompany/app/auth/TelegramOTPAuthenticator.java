@@ -104,7 +104,7 @@ public class TelegramOTPAuthenticator implements Authenticator {
         logger.infof("Сохраненный код: %s", context.getAuthenticationSession().getAuthNote(SESSION_OTP_CODE));
         logger.infof("Время отправки: %s", context.getAuthenticationSession().getAuthNote(SESSION_OTP_TIMESTAMP));
         
-        if (!validateOTP(user, enteredOtp)) {
+        if (!validateOTP(context, enteredOtp)) {
             logger.warn("=== ВАЛИДАЦИЯ ПРОВАЛЕНА ===");
             Response challenge = context.form()
                 .setError("Неверный код")
@@ -122,19 +122,19 @@ public class TelegramOTPAuthenticator implements Authenticator {
         return String.valueOf(code);
     }
 
-    // Валидация OTP с проверкой временного интервала
-    private boolean validateOTP(UserModel user, String enteredOtp) {
+    // Валидация OTP с проверкой временного интервала (используем сессионные атрибуты)
+    private boolean validateOTP(AuthenticationFlowContext context, String enteredOtp) {
         if (enteredOtp == null || enteredOtp.length() != 6 || !enteredOtp.matches("\\d+")) {
             logger.warnf("Неверный формат OTP: %s", enteredOtp);
             return false;
         }
         
-        // Получаем сохраненный код и время отправки
-        String savedOtp = user.getFirstAttribute(OTP_CODE_ATTR);
-        String timestampStr = user.getFirstAttribute(OTP_TIMESTAMP_ATTR);
+        // Получаем сохраненный код и время отправки из сессии
+        String savedOtp = context.getAuthenticationSession().getAuthNote(SESSION_OTP_CODE);
+        String timestampStr = context.getAuthenticationSession().getAuthNote(SESSION_OTP_TIMESTAMP);
         
         if (savedOtp == null || timestampStr == null) {
-            logger.warn("Отсутствует сохраненный OTP код или время отправки");
+            logger.warn("Отсутствует сохраненный OTP код или время отправки в сессии");
             return false;
         }
         
@@ -157,9 +157,9 @@ public class TelegramOTPAuthenticator implements Authenticator {
             
             logger.infof("OTP код успешно валидирован: %s (возраст: %d сек)", enteredOtp, timeElapsed);
             
-            // Очищаем использованный код
-            user.removeAttribute(OTP_CODE_ATTR);
-            user.removeAttribute(OTP_TIMESTAMP_ATTR);
+            // Очищаем использованный код из сессии
+            context.getAuthenticationSession().removeAuthNote(SESSION_OTP_CODE);
+            context.getAuthenticationSession().removeAuthNote(SESSION_OTP_TIMESTAMP);
             
             return true;
             
