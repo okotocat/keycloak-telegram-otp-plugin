@@ -16,6 +16,7 @@ Keycloak authenticator that delivers One-Time Passwords (OTP) via Telegram when 
 - Maven 3.8+
 - Keycloak 23.0.7
 - Telegram bot token (get it from [BotFather](https://core.telegram.org/bots#6-botfather)).
+- any simple webhook listener
 
 ## Installation
 1. Build the plugin:
@@ -61,6 +62,8 @@ This plugin uses a custom proxy server to send Telegram messages. The proxy serv
 import telebot
 from flask import Flask, request
 from creds import telegrambotapi
+
+## 'telegrambotapi' is a variable with telegram bot token
 
 bot = telebot.TeleBot(telegrambotapi)
 app = Flask(__name__)
